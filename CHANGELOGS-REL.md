@@ -1,7 +1,60 @@
+dragonpilot 0.7.8
+========================
+* 基於最新 openpilot 0.7.8 devel.
+* Based on latest openpilot 0.7.8 devel.
+* 加入重置 DP 設定按鈕。(感謝 @LOVEChen 建議)
+* Added "Reset DP Settings" button. (Thanks to @LOVEChen)
+* 將警示訊息更改為類似於概念 UI 的設計。
+* Alert messages changed to concept UI alike design.
+* 當 manager 出現錯誤後，按 Exit 按鈕會執行 reset_update 腳本。
+* Added ability to execute reset_update.sh when press "Exit" button once manager returned errors. 
+* 加入 ko-KR 翻譯。
+* Added ko-KR translation.
+* 加入 Honda Jade 支援。(感謝 @李俊灝)
+* Added Honda Jade support. (Thanks to @lijunhao731)
+* 修正 ui.cc 內存越界的問題。(感謝 @piggy 提供)
+* Fixed ui.cc memory out of bound issue. (Thanks to @piggy)
+* gpxd 記錄改自動存成 zip 格式。
+* gpxd now store in zip format.
+* 強制關閉 panda 檢查 DOS 硬體。
+* Force disabled DOS hardware check in panda.
+* 修正在沒網路的情況下，開機超過五分鐘的問題。
+* Fixed 5+ minutes boot time issue when there is no internet connection.
+* 錯誤回傳改使用 dp 的主機。
+* Used dp server for error reporting.
+* 更新服務改使用 gitee 的 IP 檢查連線狀態。
+* updated service uses gitee IP address instead.
+
+dragonpilot 0.7.7.0
+========================
+* 基於最新 openpilot 0.7.7 devel.
+* Based on latest openpilot 0.7.7 devel.
+* 當 Manager 出現錯誤時，顯示 IP 位置。(感謝 @dingliangxue)
+* When Manager failed, display IP address. (Thanks to  @dingliangxue)
+* 加回 sr learner 開關。
+* Re-added sr learner toggle.
+
+dragonpilot 0.7.6
+========================
+* 基於最新 openpilot 0.7.6.1 devel.
+* Based on latest openpilot 0.7.6.1 devel.
+* 優化並整合 dp 服務。 (所有的設定檔已改名，請重新設定所有的功能)
+* Optimized and integrated several dp services. (Settings have been renamed, please re-config all settings)
+* 完全關閉 steer ratio learner。
+* Completely disabled steer ratio learner.
+* 移除「加速模式」。
+* Removed Accel Profile.
+* 加入本田皓影混電版指紋v1。(感謝 @劉駿)
+* Added Honda Breeze Hybrid FPv1. (Thanks to @劉駿)
+* 加入台灣版 Toyota Prius 4.5 指紋v1。(感謝 @jeekid)
+* Added Taiwan Toyota Prius 4.5 FPv1. (Thanks to @jeekid)
+* 加入 2020 Toyota Prius 指紋v2。(感謝 @Trae)
+* Added Toyota Prius 2020 FPv2. (Thanks to @Trae)
+* 優化 Honda CR-V Hybrid 轉向。(感謝 @martint1980)
+× Optomised Honda CR-V Hybrid lateral control. (Thanks to @martint1980) 
+
 dragonpilot 0.7.5
 ========================
-* 移除方向盤監控設定。(無法取消/關閉方向盤監控)
-* Removed Steering monitor timer adjustment in code (timer in settings will no longer work.)
 * 優化 Lexus GSH 轉向。(感謝 @簡銘佑 測試)
 * Optimize Lexus GSH steering. (Thanks to @簡銘佑)
 * C2 支援自動關機「DragonAutoShutdownAt」參數。(感謝 @cgw1968 建議)

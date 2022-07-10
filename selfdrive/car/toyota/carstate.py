@@ -5,10 +5,8 @@ from selfdrive.car.interfaces import CarStateBase
 from opendbc.can.parser import CANParser
 from selfdrive.config import Conversions as CV
 from selfdrive.car.toyota.values import CAR, DBC, STEER_THRESHOLD, TSS2_CAR, NO_STOP_TIMER_CAR
-from common.realtime import sec_since_boot
 from common.params import Params
-from common.dp import get_last_modified
-params = Params()
+
 
 class CarState(CarStateBase):
   def __init__(self, CP):
@@ -16,30 +14,19 @@ class CarState(CarStateBase):
     can_define = CANDefine(DBC[CP.carFingerprint]['pt'])
     self.shifter_values = can_define.dv["GEAR_PACKET"]['GEAR']
 
+    # dp
+    self.dp_toyota_zss = Params().get('dp_toyota_zss') == b'1'
+
     # All TSS2 car have the accurate sensor
-    self.accurate_steer_angle_seen = CP.carFingerprint in TSS2_CAR or CP.carFingerprint in [CAR.LEXUS_ISH]
+    self.accurate_steer_angle_seen = CP.carFingerprint in TSS2_CAR or CP.carFingerprint in [CAR.LEXUS_ISH] or self.dp_toyota_zss
 
     # On NO_DSU cars but not TSS2 cars the cp.vl["STEER_TORQUE_SENSOR"]['STEER_ANGLE']
     # is zeroed to where the steering angle is at start.
     # Need to apply an offset as soon as the steering angle measurements are both received
-    self.needs_angle_offset = CP.carFingerprint not in TSS2_CAR or CP.carFingerprint in [CAR.LEXUS_ISH]
+    self.needs_angle_offset = CP.carFingerprint not in TSS2_CAR or CP.carFingerprint in [CAR.LEXUS_ISH] or self.dp_toyota_zss
     self.angle_offset = 0.
 
-    # dp
-    self.dragon_toyota_stock_dsu = False
-    self.ts_last_check = 0.
-    self.last_modifed = None
-
   def update(self, cp, cp_cam):
-    # dp
-    ts = sec_since_boot()
-    if ts - self.ts_last_check >= 5.:
-      modified = get_last_modified()
-      if self.last_modifed != modified:
-        self.dragon_toyota_stock_dsu = True if params.get("DragonToyotaStockDSU", encoding='utf8') == "1" else False
-        self.last_modifed = modified
-      self.ts_last_check = ts
-
     ret = car.CarState.new_message()
 
     ret.doorOpen = any([cp.vl["SEATS_DOORS"]['DOOR_OPEN_FL'], cp.vl["SEATS_DOORS"]['DOOR_OPEN_FR'],
@@ -72,11 +59,14 @@ class CarState(CarStateBase):
       self.accurate_steer_angle_seen = True
 
     if self.accurate_steer_angle_seen:
-      ret.steeringAngle = cp.vl["STEER_TORQUE_SENSOR"]['STEER_ANGLE'] - self.angle_offset
+      if self.dp_toyota_zss:
+        ret.steeringAngle = cp.vl["SECONDARY_STEER_ANGLE"]['ZORRO_STEER'] - self.angle_offset
+      else:
+        ret.steeringAngle = cp.vl["STEER_TORQUE_SENSOR"]['STEER_ANGLE'] - self.angle_offset
 
       if self.needs_angle_offset:
         angle_wheel = cp.vl["STEER_ANGLE_SENSOR"]['STEER_ANGLE'] + cp.vl["STEER_ANGLE_SENSOR"]['STEER_FRACTION']
-        if abs(angle_wheel) > 1e-3 and abs(ret.steeringAngle) > 1e-3:
+        if (abs(angle_wheel) > 1e-3 and abs(ret.steeringAngle) > 1e-3) or self.dp_toyota_zss:
           self.needs_angle_offset = False
           self.angle_offset = ret.steeringAngle - angle_wheel
     else:
@@ -118,11 +108,11 @@ class CarState(CarStateBase):
     else:
       ret.cruiseState.standstill = self.pcm_acc_status == 7
     ret.cruiseState.enabled = bool(cp.vl["PCM_CRUISE"]['CRUISE_ACTIVE'])
+    # TODO: CRUISE_STATE is a 4 bit signal, find any other non-adaptive cruise states
+    ret.cruiseState.nonAdaptive = cp.vl["PCM_CRUISE"]['CRUISE_STATE'] in [5]
 
     if self.CP.carFingerprint == CAR.PRIUS:
       ret.genericToggle = cp.vl["AUTOPARK_STATUS"]['STATE'] != 0
-    elif self.CP.carFingerprint in [CAR.LEXUS_ISH, CAR.LEXUS_GSH]:
-      ret.genericToggle = bool(cp.vl["LIGHT_STALK_ISH"]['AUTO_HIGH_BEAM'])
     else:
       ret.genericToggle = bool(cp.vl["LIGHT_STALK"]['AUTO_HIGH_BEAM'])
     ret.stockAeb = bool(cp_cam.vl["PRE_COLLISION"]["PRECOLLISION_ACTIVE"] and cp_cam.vl["PRE_COLLISION"]["FORCE"] < -1e-5)
@@ -132,17 +122,8 @@ class CarState(CarStateBase):
     self.steer_state = cp.vl["EPS_STATUS"]['LKA_STATE']
 
     if self.CP.carFingerprint in TSS2_CAR:
-      ret.leftBlindspot = cp.vl["BSM"]['L_ADJACENT'] == 1
-      ret.rightBlindspot = cp.vl["BSM"]['R_ADJACENT'] == 1
-
-    # dp
-    if self.dragon_toyota_stock_dsu and ret.cruiseState.available:
-      enable_acc = True
-      if ret.gearShifter in [car.CarState.GearShifter.reverse, car.CarState.GearShifter.park]:
-        enable_acc = False
-      if ret.seatbeltUnlatched or ret.doorOpen:
-        enable_acc = False
-      ret.cruiseState.enabled = enable_acc
+      ret.leftBlindspot = (cp.vl["BSM"]['L_ADJACENT'] == 1) or (cp.vl["BSM"]['L_APPROACHING'] == 1)
+      ret.rightBlindspot = (cp.vl["BSM"]['R_ADJACENT'] == 1) or (cp.vl["BSM"]['R_APPROACHING'] == 1)
 
     return ret
 
@@ -219,7 +200,6 @@ class CarState(CarStateBase):
       signals.append(("LOW_SPEED_LOCKOUT", "PCM_CRUISE_2", 0))
       checks.append(("PCM_CRUISE_2", 33))
 
-
     if CP.carFingerprint == CAR.PRIUS:
       signals += [("STATE", "AUTOPARK_STATUS", 0)]
 
@@ -231,7 +211,12 @@ class CarState(CarStateBase):
 
     if CP.carFingerprint in TSS2_CAR:
       signals += [("L_ADJACENT", "BSM", 0)]
+      signals += [("L_APPROACHING", "BSM", 0)]
       signals += [("R_ADJACENT", "BSM", 0)]
+      signals += [("R_APPROACHING", "BSM", 0)]
+
+    if Params().get('dp_toyota_zss') == b'1':
+      signals += [("ZORRO_STEER", "SECONDARY_STEER_ANGLE", 0)]
 
     checks = []
 
@@ -240,9 +225,14 @@ class CarState(CarStateBase):
   @staticmethod
   def get_cam_can_parser(CP):
 
-    signals = [("FORCE", "PRE_COLLISION", 0), ("PRECOLLISION_ACTIVE", "PRE_COLLISION", 0)]
+    signals = [
+      ("FORCE", "PRE_COLLISION", 0),
+      ("PRECOLLISION_ACTIVE", "PRE_COLLISION", 0)
+    ]
 
     # use steering message to check if panda is connected to frc
-    checks = [("STEERING_LKA", 42)]
+    checks = [
+      ("STEERING_LKA", 42)
+    ]
 
     return CANParser(DBC[CP.carFingerprint]['pt'], signals, checks, 2)

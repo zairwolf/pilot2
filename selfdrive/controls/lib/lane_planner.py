@@ -1,10 +1,8 @@
 from common.numpy_fast import interp
 import numpy as np
 from cereal import log
-from common.dp import get_last_modified
+import cereal.messaging as messaging
 from common.realtime import sec_since_boot
-from common.params import Params
-params = Params()
 
 CAMERA_OFFSET = 0.06  # m from center car to camera
 
@@ -56,9 +54,9 @@ class LanePlanner():
     self.p_poly = [0., 0., 0., 0.]
     self.d_poly = [0., 0., 0., 0.]
 
-    self.lane_width_estimate = 3.7
+    self.lane_width_estimate = 2.85
     self.lane_width_certainty = 1.0
-    self.lane_width = 3.7
+    self.lane_width = 2.85
 
     self.l_prob = 0.
     self.r_prob = 0.
@@ -70,9 +68,9 @@ class LanePlanner():
     self.x_points = np.arange(50)
 
     # dp
-    self.last_ts = 0.
-    self.last_modified = 0.
-    self.camera_offset = 0.06
+    self.sm = messaging.SubMaster(['dragonConf'])
+    self.dp_camera_offset = CAMERA_OFFSET
+    self.last_ts = 0
 
   def parse_model(self, md):
     if len(md.leftLane.poly):
@@ -91,25 +89,21 @@ class LanePlanner():
       self.r_lane_change_prob = md.meta.desireState[log.PathPlan.Desire.laneChangeRight - 1]
 
   def update_d_poly(self, v_ego):
-    ts = sec_since_boot()
-    if ts - self.last_ts >= 5.:
-      modified = get_last_modified()
-      if self.last_modified != modified:
-        try:
-          self.camera_offset = int(params.get("DragonCameraOffset", encoding='utf8')) * 0.01
-        except (TypeError, ValueError):
-          self.camera_offset = CAMERA_OFFSET
-      self.last_modified = modified
-      self.last_ts = ts
     # only offset left and right lane lines; offsetting p_poly does not make sense
-    self.l_poly[3] += self.camera_offset
-    self.r_poly[3] += self.camera_offset
+    if sec_since_boot() - self.last_ts >= 5.:
+      self.sm.update(0)
+      if self.sm.updated['dragonConf']:
+        self.dp_camera_offset = self.sm['dragonConf'].dpCameraOffset * 0.01
+      self.last_ts = sec_since_boot()
+    self.l_poly[3] += self.dp_camera_offset
+    self.r_poly[3] += self.dp_camera_offset
+    self.p_poly[3] += self.dp_camera_offset
 
     # Find current lanewidth
     self.lane_width_certainty += 0.05 * (self.l_prob * self.r_prob - self.lane_width_certainty)
     current_lane_width = abs(self.l_poly[3] - self.r_poly[3])
     self.lane_width_estimate += 0.005 * (current_lane_width - self.lane_width_estimate)
-    speed_lane_width = interp(v_ego, [0., 31.], [2.8, 3.5])
+    speed_lane_width = interp(v_ego, [0., 14., 20.], [2.5, 3., 3.5]) # German Standards
     self.lane_width = self.lane_width_certainty * self.lane_width_estimate + \
                       (1 - self.lane_width_certainty) * speed_lane_width
 

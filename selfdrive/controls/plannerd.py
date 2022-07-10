@@ -15,7 +15,7 @@ def plannerd_thread(sm=None, pm=None):
   gc.disable()
 
   # start the loop
-  set_realtime_priority(2)
+  set_realtime_priority(52)
 
   cloudlog.info("plannerd is waiting for CarParams")
   CP = car.CarParams.from_bytes(Params().get("CarParams", block=True))
@@ -27,7 +27,7 @@ def plannerd_thread(sm=None, pm=None):
   VM = VehicleModel(CP)
 
   if sm is None:
-    sm = messaging.SubMaster(['carState', 'controlsState', 'radarState', 'model', 'liveParameters'])
+    sm = messaging.SubMaster(['carState', 'controlsState', 'radarState', 'model', 'liveParameters', 'dragonConf'])
 
   if pm is None:
     pm = messaging.PubMaster(['plan', 'liveLongitudinalMpc', 'pathPlan', 'liveMpc'])
@@ -36,6 +36,9 @@ def plannerd_thread(sm=None, pm=None):
   sm['liveParameters'].sensorValid = True
   sm['liveParameters'].steerRatio = CP.steerRatio
   sm['liveParameters'].stiffnessFactor = 1.0
+
+  sm['dragonConf'].dpSlowOnCurve = False
+  sm['dragonConf'].dpAccelProfile = 0
 
   while True:
     sm.update()

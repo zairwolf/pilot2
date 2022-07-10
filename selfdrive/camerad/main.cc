@@ -2,7 +2,7 @@
 #include <signal.h>
 #include <cassert>
 
-#ifdef QCOM
+#if defined(QCOM) && !defined(QCOM_REPLAY)
 #include "cameras/camera_qcom.h"
 #elif QCOM2
 #include "cameras/camera_qcom2.h"
@@ -15,6 +15,7 @@
 #include "common/util.h"
 #include "common/swaglog.h"
 
+#include "common/ipc.h"
 #include "common/visionipc.h"
 #include "common/visionbuf.h"
 #include "common/visionimg.h"
@@ -29,9 +30,7 @@
 
 #include <libyuv.h>
 #include <czmq.h>
-#include <capnp/serialize.h>
 #include <jpeglib.h>
-#include "cereal/gen/cpp/log.capnp.h"
 
 #define UI_BUF_COUNT 4
 #define YUV_COUNT 40
@@ -143,10 +142,7 @@ struct VisionState {
 
   zsock_t *terminate_pub;
 
-  Context * msg_context;
-  PubSocket *frame_sock;
-  PubSocket *front_frame_sock;
-  PubSocket *thumbnail_sock;
+  PubMaster *pm;
 
   pthread_mutex_t clients_lock;
   VisionClientState clients[MAX_CLIENTS];
@@ -158,16 +154,9 @@ void* frontview_thread(void *arg) {
   VisionState *s = (VisionState*)arg;
 
   set_thread_name("frontview");
-
-  s->msg_context = Context::create();
-
   // we subscribe to this for placement of the AE metering box
   // TODO: the loop is bad, ideally models shouldn't affect sensors
-  Context *msg_context = Context::create();
-  SubSocket *monitoring_sock = SubSocket::create(msg_context, "driverState", "127.0.0.1", true);
-  SubSocket *dmonstate_sock = SubSocket::create(msg_context, "dMonitoringState", "127.0.0.1", true);
-  assert(monitoring_sock != NULL);
-  assert(dmonstate_sock != NULL);
+  SubMaster sm({"driverState", "dMonitoringState"});
 
   cl_command_queue q = clCreateCommandQueue(s->context, s->device_id, 0, &err);
   assert(err == 0);
@@ -182,7 +171,7 @@ void* frontview_thread(void *arg) {
     int rgb_idx = ui_idx;
     FrameMetadata frame_data = s->cameras.front.camera_bufs_metadata[buf_idx];
 
-    double t1 = millis_since_boot();
+    //double t1 = millis_since_boot();
 
     cl_event debayer_event;
     if (s->cameras.front.ci.bayer) {
@@ -211,54 +200,34 @@ void* frontview_thread(void *arg) {
     tbuffer_release(&s->cameras.front.camera_tb, buf_idx);
     visionbuf_sync(&s->rgb_front_bufs[ui_idx], VISIONBUF_SYNC_FROM_DEVICE);
 
+    sm.update(0);
     // no more check after gps check
-    if (!s->rhd_front_checked) {
-      Message *msg_dmon = dmonstate_sock->receive(true);
-      if (msg_dmon != NULL) {
-        auto amsg = kj::heapArray<capnp::word>((msg_dmon->getSize() / sizeof(capnp::word)) + 1);
-        memcpy(amsg.begin(), msg_dmon->getData(), msg_dmon->getSize());
-
-        capnp::FlatArrayMessageReader cmsg(amsg);
-        cereal::Event::Reader event = cmsg.getRoot<cereal::Event>();
-
-        s->rhd_front = event.getDMonitoringState().getIsRHD();
-        s->rhd_front_checked = event.getDMonitoringState().getRhdChecked();
-
-        delete msg_dmon;
-      }
+    if (!s->rhd_front_checked && sm.updated("dMonitoringState")) {
+      auto state = sm["dMonitoringState"].getDMonitoringState();
+      s->rhd_front = state.getIsRHD();
+      s->rhd_front_checked = state.getRhdChecked();
     }
 
-    Message *msg = monitoring_sock->receive(true);
-    if (msg != NULL) {
-      auto amsg = kj::heapArray<capnp::word>((msg->getSize() / sizeof(capnp::word)) + 1);
-      memcpy(amsg.begin(), msg->getData(), msg->getSize());
-
-      capnp::FlatArrayMessageReader cmsg(amsg);
-      cereal::Event::Reader event = cmsg.getRoot<cereal::Event>();
-
-      float face_prob = event.getDriverState().getFaceProb();
+    if (sm.updated("driverState")) {
+      auto state = sm["driverState"].getDriverState();
+      float face_prob = state.getFaceProb();
       float face_position[2];
-      face_position[0] = event.getDriverState().getFacePosition()[0];
-      face_position[1] = event.getDriverState().getFacePosition()[1];
+      face_position[0] = state.getFacePosition()[0];
+      face_position[1] = state.getFacePosition()[1];
 
       // set front camera metering target
-      if (face_prob > 0.4)
-      {
+      if (face_prob > 0.4) {
         int x_offset = s->rhd_front ? 0:s->rgb_front_width - 0.5 * s->rgb_front_height;
         s->front_meteringbox_xmin = x_offset + (face_position[0] + 0.5) * (0.5 * s->rgb_front_height) - 72;
         s->front_meteringbox_xmax = x_offset + (face_position[0] + 0.5) * (0.5 * s->rgb_front_height) + 72;
         s->front_meteringbox_ymin = (face_position[1] + 0.5) * (s->rgb_front_height) - 72;
         s->front_meteringbox_ymax = (face_position[1] + 0.5) * (s->rgb_front_height) + 72;
-      }
-      else // use default setting if no face
-      {
+      } else {// use default setting if no face
         s->front_meteringbox_ymin = s->rgb_front_height * 1 / 3;
         s->front_meteringbox_ymax = s->rgb_front_height * 1;
         s->front_meteringbox_xmin = s->rhd_front ? 0:s->rgb_front_width * 3 / 5;
         s->front_meteringbox_xmax = s->rhd_front ? s->rgb_front_width * 2 / 5:s->rgb_front_width;
       }
-
-      delete msg;
     }
 
     // auto exposure
@@ -330,7 +299,7 @@ void* frontview_thread(void *arg) {
 
     // send frame event
     {
-      if (s->front_frame_sock != NULL) {
+      if (s->pm != NULL) {
         capnp::MallocMessageBuilder msg;
         cereal::Event::Builder event = msg.initRoot<cereal::Event>();
         event.setLogMonoTime(nanos_since_boot());
@@ -349,9 +318,7 @@ void* frontview_thread(void *arg) {
         framed.setGainFrac(frame_data.gain_frac);
         framed.setFrameType(cereal::FrameData::FrameType::FRONT);
 
-        auto words = capnp::messageToFlatArray(msg);
-        auto bytes = words.asBytes();
-        s->front_frame_sock->send((char*)bytes.begin(), bytes.size());
+        s->pm->send("frontFrame", msg);
       }
     }
 
@@ -362,13 +329,10 @@ void* frontview_thread(void *arg) {
 
     tbuffer_dispatch(&s->ui_front_tb, ui_idx);
 
-    double t2 = millis_since_boot();
-
+    //double t2 = millis_since_boot();
     //LOGD("front process: %.2fms", t2-t1);
   }
-
-  delete monitoring_sock;
-  delete dmonstate_sock;
+  clReleaseCommandQueue(q);
 
   return NULL;
 }
@@ -379,12 +343,21 @@ void* processing_thread(void *arg) {
 
   set_thread_name("processing");
 
-  err = set_realtime_priority(1);
+  err = set_realtime_priority(51);
   LOG("setpriority returns %d", err);
 
+#if defined(QCOM) && !defined(QCOM_REPLAY)
+  std::unique_ptr<uint8_t[]> rgb_roi_buf = std::make_unique<uint8_t[]>((s->rgb_width/NUM_SEGMENTS_X)*(s->rgb_height/NUM_SEGMENTS_Y)*3);
+  std::unique_ptr<int16_t[]> conv_result = std::make_unique<int16_t[]>((s->rgb_width/NUM_SEGMENTS_X)*(s->rgb_height/NUM_SEGMENTS_Y));
+#endif
+
   // init cl stuff
+#ifdef __APPLE__
+  cl_command_queue q = clCreateCommandQueue(s->context, s->device_id, 0, &err);
+#else
   const cl_queue_properties props[] = {0}; //CL_QUEUE_PRIORITY_KHR, CL_QUEUE_PRIORITY_HIGH_KHR, 0};
   cl_command_queue q = clCreateCommandQueueWithProperties(s->context, s->device_id, props, &err);
+#endif
   assert(err == 0);
 
   // init the net
@@ -440,7 +413,7 @@ void* processing_thread(void *arg) {
 
     visionbuf_sync(&s->rgb_bufs[rgb_idx], VISIONBUF_SYNC_FROM_DEVICE);
 
-#ifdef QCOM
+#if defined(QCOM) && !defined(QCOM_REPLAY)
     /*FILE *dump_rgb_file = fopen("/tmp/process_dump.rgb", "wb");
     fwrite(s->rgb_bufs[rgb_idx].addr, s->rgb_bufs[rgb_idx].len, sizeof(uint8_t), dump_rgb_file);
     fclose(dump_rgb_file);
@@ -449,13 +422,12 @@ void* processing_thread(void *arg) {
     /*double t10 = millis_since_boot();*/
 
     // cache rgb roi and write to cl
-    uint8_t *rgb_roi_buf = new uint8_t[(s->rgb_width/NUM_SEGMENTS_X)*(s->rgb_height/NUM_SEGMENTS_Y)*3];
     int roi_id = cnt % ((ROI_X_MAX-ROI_X_MIN+1)*(ROI_Y_MAX-ROI_Y_MIN+1)); // rolling roi
     int roi_x_offset = roi_id % (ROI_X_MAX-ROI_X_MIN+1);
     int roi_y_offset = roi_id / (ROI_X_MAX-ROI_X_MIN+1);
 
     for (int r=0;r<(s->rgb_height/NUM_SEGMENTS_Y);r++) {
-      memcpy(rgb_roi_buf + r * (s->rgb_width/NUM_SEGMENTS_X) * 3,
+      memcpy(rgb_roi_buf.get() + r * (s->rgb_width/NUM_SEGMENTS_X) * 3,
               (uint8_t *) s->rgb_bufs[rgb_idx].addr + \
                 (ROI_Y_MIN + roi_y_offset) * s->rgb_height/NUM_SEGMENTS_Y * FULL_STRIDE_X * 3 + \
                 (ROI_X_MIN + roi_x_offset) * s->rgb_width/NUM_SEGMENTS_X * 3 + r * FULL_STRIDE_X * 3,
@@ -463,7 +435,7 @@ void* processing_thread(void *arg) {
     }
 
     err = clEnqueueWriteBuffer (q, s->rgb_conv_roi_cl, true, 0,
-        s->rgb_width/NUM_SEGMENTS_X * s->rgb_height/NUM_SEGMENTS_Y * 3 * sizeof(uint8_t), rgb_roi_buf, 0, 0, 0);
+        s->rgb_width/NUM_SEGMENTS_X * s->rgb_height/NUM_SEGMENTS_Y * 3 * sizeof(uint8_t), rgb_roi_buf.get(), 0, 0, 0);
     assert(err == 0);
 
     /*double t11 = millis_since_boot();
@@ -486,32 +458,57 @@ void* processing_thread(void *arg) {
     clWaitForEvents(1, &conv_event);
     clReleaseEvent(conv_event);
 
-    int16_t *conv_result = new int16_t[(s->rgb_width/NUM_SEGMENTS_X)*(s->rgb_height/NUM_SEGMENTS_Y)];
     err = clEnqueueReadBuffer(q, s->rgb_conv_result_cl, true, 0,
-       s->rgb_width/NUM_SEGMENTS_X * s->rgb_height/NUM_SEGMENTS_Y * sizeof(int16_t), conv_result, 0, 0, 0);
+       s->rgb_width/NUM_SEGMENTS_X * s->rgb_height/NUM_SEGMENTS_Y * sizeof(int16_t), conv_result.get(), 0, 0, 0);
     assert(err == 0);
 
     /*t11 = millis_since_boot();
     printf("conv time: %f ms\n", t11 - t10);
     t10 = millis_since_boot();*/
 
-    get_lapmap_one(conv_result, &s->lapres[roi_id], s->rgb_width/NUM_SEGMENTS_X, s->rgb_height/NUM_SEGMENTS_Y);
+    get_lapmap_one(conv_result.get(), &s->lapres[roi_id], s->rgb_width/NUM_SEGMENTS_X, s->rgb_height/NUM_SEGMENTS_Y);
 
     /*t11 = millis_since_boot();
     printf("pool time: %f ms\n", t11 - t10);
     t10 = millis_since_boot();*/
 
-    delete [] rgb_roi_buf;
-    delete [] conv_result;
-
     /*t11 = millis_since_boot();
     printf("process time: %f ms\n ----- \n", t11 - t10);
     t10 = millis_since_boot();*/
+
+    // setup self recover
+    const float lens_true_pos = s->cameras.rear.lens_true_pos;
+    if (is_blur(&s->lapres[0]) &&
+       (lens_true_pos < (s->cameras.device == DEVICE_LP3? LP3_AF_DAC_DOWN:OP3T_AF_DAC_DOWN)+1 ||
+        lens_true_pos > (s->cameras.device == DEVICE_LP3? LP3_AF_DAC_UP:OP3T_AF_DAC_UP)-1) &&
+       s->cameras.rear.self_recover < 2) {
+      // truly stuck, needs help
+      s->cameras.rear.self_recover -= 1;
+      if (s->cameras.rear.self_recover < -FOCUS_RECOVER_PATIENCE) {
+        LOGW("rear camera bad state detected. attempting recovery from %.1f, recover state is %d",
+                                      lens_true_pos, s->cameras.rear.self_recover.load());
+        s->cameras.rear.self_recover = FOCUS_RECOVER_STEPS + ((lens_true_pos < (s->cameras.device == DEVICE_LP3? LP3_AF_DAC_M:OP3T_AF_DAC_M))?1:0); // parity determined by which end is stuck at
+      }
+    } else if ((lens_true_pos < (s->cameras.device == DEVICE_LP3? LP3_AF_DAC_M - LP3_AF_DAC_3SIG:OP3T_AF_DAC_M - OP3T_AF_DAC_3SIG) ||
+               lens_true_pos > (s->cameras.device == DEVICE_LP3? LP3_AF_DAC_M + LP3_AF_DAC_3SIG:OP3T_AF_DAC_M + OP3T_AF_DAC_3SIG)) &&
+              s->cameras.rear.self_recover < 2) {
+      // in suboptimal position with high prob, but may still recover by itself
+      s->cameras.rear.self_recover -= 1;
+      if (s->cameras.rear.self_recover < -(FOCUS_RECOVER_PATIENCE*3)) {
+        LOGW("rear camera bad state detected. attempting recovery from %.1f, recover state is %d", lens_true_pos, s->cameras.rear.self_recover.load());
+        s->cameras.rear.self_recover = FOCUS_RECOVER_STEPS/2 + ((lens_true_pos < (s->cameras.device == DEVICE_LP3? LP3_AF_DAC_M:OP3T_AF_DAC_M))?1:0);
+      }
+    } else if (s->cameras.rear.self_recover < 0) {
+      s->cameras.rear.self_recover += 1; // reset if fine
+    }
+
 #endif
 
     double t2 = millis_since_boot();
 
+#ifndef QCOM2
     uint8_t *bgr_ptr = (uint8_t*)s->rgb_bufs[rgb_idx].addr;
+#endif
 
     double yt1 = millis_since_boot();
 
@@ -520,8 +517,6 @@ void* processing_thread(void *arg) {
     s->yuv_metas[yuv_idx] = frame_data;
 
     uint8_t* yuv_ptr_y = s->yuv_bufs[yuv_idx].y;
-    uint8_t* yuv_ptr_u = s->yuv_bufs[yuv_idx].u;
-    uint8_t* yuv_ptr_v = s->yuv_bufs[yuv_idx].v;
     cl_mem yuv_cl = s->yuv_cl[yuv_idx];
     rgb_to_yuv_queue(&s->rgb_to_yuv_state, q, s->rgb_bufs_cl[rgb_idx], yuv_cl);
     visionbuf_sync(&s->yuv_ion[yuv_idx], VISIONBUF_SYNC_FROM_DEVICE);
@@ -534,7 +529,7 @@ void* processing_thread(void *arg) {
 
     // send frame event
     {
-      if (s->frame_sock != NULL) {
+      if (s->pm != NULL) {
         capnp::MallocMessageBuilder msg;
         cereal::Event::Builder event = msg.initRoot<cereal::Event>();
         event.setLogMonoTime(nanos_since_boot());
@@ -552,13 +547,14 @@ void* processing_thread(void *arg) {
         framed.setLensTruePos(frame_data.lens_true_pos);
         framed.setGainFrac(frame_data.gain_frac);
 
-#ifdef QCOM
+#if defined(QCOM) && !defined(QCOM_REPLAY)
         kj::ArrayPtr<const int16_t> focus_vals(&s->cameras.rear.focus[0], NUM_FOCUS);
         kj::ArrayPtr<const uint8_t> focus_confs(&s->cameras.rear.confidence[0], NUM_FOCUS);
         framed.setFocusVal(focus_vals);
         framed.setFocusConf(focus_confs);
         kj::ArrayPtr<const uint16_t> sharpness_score(&s->lapres[0], (ROI_X_MAX-ROI_X_MIN+1)*(ROI_Y_MAX-ROI_Y_MIN+1));
         framed.setSharpnessScore(sharpness_score);
+        framed.setRecoverState(s->cameras.rear.self_recover);
 #endif
 
 // TODO: add this back
@@ -570,9 +566,7 @@ void* processing_thread(void *arg) {
         kj::ArrayPtr<const float> transform_vs(&s->yuv_transform.v[0], 9);
         framed.setTransform(transform_vs);
 
-        auto words = capnp::messageToFlatArray(msg);
-        auto bytes = words.asBytes();
-        s->frame_sock->send((char*)bytes.begin(), bytes.size());
+        s->pm->send("frame", msg);
       }
     }
 
@@ -581,7 +575,7 @@ void* processing_thread(void *arg) {
     // one thumbnail per 5 seconds (instead of %5 == 0 posenet)
     if (cnt % 100 == 3) {
       uint8_t* thumbnail_buffer = NULL;
-      uint64_t thumbnail_len = 0;
+      unsigned long thumbnail_len = 0;
 
       unsigned char *row = (unsigned char *)malloc(s->rgb_width/4*3);
 
@@ -633,10 +627,8 @@ void* processing_thread(void *arg) {
       thumbnaild.setTimestampEof(frame_data.timestamp_eof);
       thumbnaild.setThumbnail(kj::arrayPtr((const uint8_t*)thumbnail_buffer, thumbnail_len));
 
-      auto words = capnp::messageToFlatArray(msg);
-      auto bytes = words.asBytes();
-      if (s->thumbnail_sock != NULL) {
-        s->thumbnail_sock->send((char*)bytes.begin(), bytes.size());
+      if (s->pm != NULL) {
+        s->pm->send("thumbnail", msg);
       }
 
       free(thumbnail_buffer);
@@ -680,6 +672,7 @@ void* processing_thread(void *arg) {
     LOGD("queued: %.2fms, yuv: %.2f, | processing: %.3fms", (t2-t1), (yt2-yt1), (t5-t1));
   }
 
+  clReleaseCommandQueue(q);
   return NULL;
 }
 
@@ -893,21 +886,7 @@ void* visionserver_thread(void* arg) {
   assert(terminate);
   void* terminate_raw = zsock_resolve(terminate);
 
-  unlink(VIPC_SOCKET_PATH);
-
-  int sock = socket(AF_UNIX, SOCK_SEQPACKET, 0);
-  struct sockaddr_un addr = {
-    .sun_family = AF_UNIX,
-    .sun_path = VIPC_SOCKET_PATH,
-  };
-  err = bind(sock, (struct sockaddr *)&addr, sizeof(addr));
-  assert(err == 0);
-
-  err = listen(sock, 3);
-  assert(err == 0);
-
-  // printf("waiting\n");
-
+  int sock = ipc_bind(VIPC_SOCKET_PATH);
   while (!do_exit) {
     zmq_pollitem_t polls[2] = {{0}};
     polls[0].socket = terminate_raw;
@@ -1103,7 +1082,7 @@ void init_buffers(VisionState *s) {
     s->rgb_front_width = s->cameras.front.ci.frame_width;
     s->rgb_front_height = s->cameras.front.ci.frame_height;
   }
-  
+
 
   for (int i=0; i<UI_BUF_COUNT; i++) {
     VisionImg img = visionimg_alloc_rgb24(s->rgb_front_width, s->rgb_front_height, &s->rgb_front_bufs[i]);
@@ -1171,13 +1150,14 @@ void init_buffers(VisionState *s) {
     assert(err == 0);
   }
 
-  s->prg_rgb_laplacian = build_conv_program(s, s->rgb_width/NUM_SEGMENTS_X, s->rgb_height/NUM_SEGMENTS_Y, 
+  s->prg_rgb_laplacian = build_conv_program(s, s->rgb_width/NUM_SEGMENTS_X, s->rgb_height/NUM_SEGMENTS_Y,
                                             3);
   s->krnl_rgb_laplacian = clCreateKernel(s->prg_rgb_laplacian, "rgb2gray_conv2d", &err);
   assert(err == 0);
-  s->rgb_conv_roi_cl = clCreateBuffer(s->context, CL_MEM_READ_WRITE | CL_MEM_SVM_FINE_GRAIN_BUFFER,
+  // TODO: Removed CL_MEM_SVM_FINE_GRAIN_BUFFER, confirm it doesn't matter
+  s->rgb_conv_roi_cl = clCreateBuffer(s->context, CL_MEM_READ_WRITE,
       s->rgb_width/NUM_SEGMENTS_X * s->rgb_height/NUM_SEGMENTS_Y * 3 * sizeof(uint8_t), NULL, NULL);
-  s->rgb_conv_result_cl = clCreateBuffer(s->context, CL_MEM_READ_WRITE | CL_MEM_SVM_FINE_GRAIN_BUFFER,
+  s->rgb_conv_result_cl = clCreateBuffer(s->context, CL_MEM_READ_WRITE,
       s->rgb_width/NUM_SEGMENTS_X * s->rgb_height/NUM_SEGMENTS_Y * sizeof(int16_t), NULL, NULL);
   s->rgb_conv_filter_cl = clCreateBuffer(s->context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
       9 * sizeof(int16_t), (void*)&lapl_conv_krnl, NULL);
@@ -1198,25 +1178,33 @@ void free_buffers(VisionState *s) {
   // free bufs
   for (int i=0; i<FRAME_BUF_COUNT; i++) {
     visionbuf_free(&s->camera_bufs[i]);
+    visionbuf_free(&s->front_camera_bufs[i]);
     visionbuf_free(&s->focus_bufs[i]);
     visionbuf_free(&s->stats_bufs[i]);
   }
 
-  for (int i=0; i<FRAME_BUF_COUNT; i++) {
-   visionbuf_free(&s->front_camera_bufs[i]);
-  }
-
   for (int i=0; i<UI_BUF_COUNT; i++) {
     visionbuf_free(&s->rgb_bufs[i]);
-  }
-
-  for (int i=0; i<UI_BUF_COUNT; i++) {
     visionbuf_free(&s->rgb_front_bufs[i]);
   }
 
   for (int i=0; i<YUV_COUNT; i++) {
     visionbuf_free(&s->yuv_ion[i]);
+    visionbuf_free(&s->yuv_front_ion[i]);
   }
+
+  clReleaseMemObject(s->rgb_conv_roi_cl);
+  clReleaseMemObject(s->rgb_conv_result_cl);
+  clReleaseMemObject(s->rgb_conv_filter_cl);
+
+  clReleaseProgram(s->prg_debayer_rear);
+  clReleaseProgram(s->prg_debayer_front);
+  clReleaseKernel(s->krnl_debayer_rear);
+  clReleaseKernel(s->krnl_debayer_front);
+  
+  clReleaseProgram(s->prg_rgb_laplacian);
+  clReleaseKernel(s->krnl_rgb_laplacian);
+  
 }
 
 void party(VisionState *s) {
@@ -1235,7 +1223,7 @@ void party(VisionState *s) {
                        processing_thread, s);
   assert(err == 0);
 
-#ifndef QCOM2
+#if !defined(QCOM2) && !defined(__APPLE__)
   // TODO: fix front camera on qcom2
   pthread_t frontview_thread_handle;
   err = pthread_create(&frontview_thread_handle, NULL,
@@ -1244,7 +1232,7 @@ void party(VisionState *s) {
 #endif
 
   // priority for cameras
-  err = set_realtime_priority(1);
+  err = set_realtime_priority(51);
   LOG("setpriority returns %d", err);
 
   cameras_run(&s->cameras);
@@ -1256,7 +1244,7 @@ void party(VisionState *s) {
 
   zsock_signal(s->terminate_pub, 0);
 
-#ifndef QCOM2
+#if !defined(QCOM2) && !defined(QCOM_REPLAY) && !defined(__APPLE__)
   LOG("joining frontview_thread");
   err = pthread_join(frontview_thread_handle, NULL);
   assert(err == 0);
@@ -1274,14 +1262,13 @@ void party(VisionState *s) {
 }
 
 int main(int argc, char *argv[]) {
-  int err;
-  set_realtime_priority(1);
+  set_realtime_priority(51);
 
   zsys_handler_set(NULL);
   signal(SIGINT, (sighandler_t)set_do_exit);
   signal(SIGTERM, (sighandler_t)set_do_exit);
 
-  VisionState state = {0};
+  VisionState state = {};
   VisionState *s = &state;
 
   clu_init();
@@ -1296,26 +1283,17 @@ int main(int argc, char *argv[]) {
 
   init_buffers(s);
 
-#if defined(QCOM) || defined(QCOM2)
-  s->msg_context = Context::create();
-  s->frame_sock = PubSocket::create(s->msg_context, "frame");
-  s->front_frame_sock = PubSocket::create(s->msg_context, "frontFrame");
-  s->thumbnail_sock = PubSocket::create(s->msg_context, "thumbnail");
-  assert(s->frame_sock != NULL);
-  assert(s->front_frame_sock != NULL);
-  assert(s->thumbnail_sock != NULL);
+#if (defined(QCOM) && !defined(QCOM_REPLAY)) || defined(QCOM2)
+  s->pm = new PubMaster({"frame", "frontFrame", "thumbnail"});
 #endif
 
   cameras_open(&s->cameras, &s->camera_bufs[0], &s->focus_bufs[0], &s->stats_bufs[0], &s->front_camera_bufs[0]);
 
   party(s);
 
-#if defined(QCOM) || defined(QCOM2)
-  delete s->frame_sock;
-  delete s->front_frame_sock;
-  delete s->thumbnail_sock;
-  delete s->msg_context;
-#endif
+  if (s->pm != NULL) {
+    delete s->pm;
+  }
 
   free_buffers(s);
   cl_free(s);

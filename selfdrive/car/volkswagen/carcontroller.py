@@ -3,8 +3,7 @@ from selfdrive.car import apply_std_steer_torque_limits
 from selfdrive.car.volkswagen import volkswagencan
 from selfdrive.car.volkswagen.values import DBC, CANBUS, NWL, MQB_LDW_MESSAGES, BUTTON_STATES, CarControllerParams
 from opendbc.can.packer import CANPacker
-
-VisualAlert = car.CarControl.HUDControl.VisualAlert
+from common.dp_common import common_controller_ctrl
 
 
 class CarController():
@@ -32,7 +31,11 @@ class CarController():
 
     self.steer_rate_limited = False
 
-  def update(self, enabled, CS, frame, actuators, visual_alert, audible_alert, leftLaneVisible, rightLaneVisible):
+    # dp
+    self.last_blinker_on = False
+    self.blinker_end_frame = 0.
+
+  def update(self, enabled, CS, frame, actuators, visual_alert, audible_alert, leftLaneVisible, rightLaneVisible, dragonconf):
     """ Controls thread """
 
     P = CarControllerParams
@@ -77,7 +80,7 @@ class CarController():
           self.hcaEnabledFrameCount = 0
         else:
           self.hcaEnabledFrameCount += 1
-          if self.hcaEnabledFrameCount >=  118 * (100 / P.HCA_STEP):  # 118s
+          if self.hcaEnabledFrameCount >= 118 * (100 / P.HCA_STEP):  # 118s
             # The Kansas I-70 Crosswind Problem: if we truly do need to steer
             # in one direction for > 360 seconds, we have to disable HCA for a
             # frame while actively steering. Testing shows we can just set the
@@ -106,6 +109,19 @@ class CarController():
         hcaEnabled = False
         apply_steer = 0
 
+      # dp
+      blinker_on = CS.out.leftBlinker or CS.out.rightBlinker
+      if not enabled:
+        self.blinker_end_frame = 0
+      if self.last_blinker_on and not blinker_on:
+        self.blinker_end_frame = frame + dragonconf.dpSignalOffDelay
+      apply_steer = common_controller_ctrl(enabled,
+                                           dragonconf.dpLatCtrl,
+                                           dragonconf.dpSteeringOnSignal,
+                                           blinker_on or frame < self.blinker_end_frame,
+                                           apply_steer)
+      self.last_blinker_on = blinker_on
+
       self.apply_steer_last = apply_steer
       idx = (frame / P.HCA_STEP) % 16
       can_sends.append(self.create_steering_control(self.packer_pt, CANBUS.pt, apply_steer,
@@ -124,7 +140,7 @@ class CarController():
     if frame % P.LDW_STEP == 0:
       hcaEnabled = True if enabled and not CS.out.standstill else False
 
-      if visual_alert == VisualAlert.steerRequired:
+      if visual_alert == car.CarControl.HUDControl.VisualAlert.steerRequired:
         hud_alert = MQB_LDW_MESSAGES["laneAssistTakeOverSilent"]
       else:
         hud_alert = MQB_LDW_MESSAGES["none"]

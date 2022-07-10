@@ -6,7 +6,6 @@ from opendbc.can.parser import CANParser
 from opendbc.can.can_define import CANDefine
 from selfdrive.car.volkswagen.values import DBC, CANBUS, NWL, TRANS, GEAR, BUTTON_STATES, CarControllerParams
 
-
 class CarState(CarStateBase):
   def __init__(self, CP):
     super().__init__(CP)
@@ -92,7 +91,7 @@ class CarState(CarStateBase):
                         pt_cp.vl["Gateway_72"]['ZV_HD_offen']])
 
     # Update seatbelt fastened status.
-    ret.seatbeltUnlatched = False if pt_cp.vl["Airbag_02"]["AB_Gurtschloss_FA"] == 3 else True
+    ret.seatbeltUnlatched = pt_cp.vl["Airbag_02"]["AB_Gurtschloss_FA"] != 3
 
     # Update driver preference for metric. VW stores many different unit
     # preferences, including separate units for for distance vs. speed.
@@ -330,8 +329,11 @@ class CarState(CarStateBase):
       # The ACC radar is here on CANBUS.pt
       signals += [("SetSpeed", "ACC_02", 0)]  # ACC set speed
       checks += [("ACC_02", 17)]  # From J428 ACC radar control module
-    
+
     return CANParser(DBC[CP.carFingerprint]['pt'], signals, checks, CANBUS.pt)
+
+  # A single signal is monitored from the camera CAN bus, and then ignored,
+  # so the presence of CAN traffic can be verified with cam_cp.valid.
 
   @staticmethod
   def get_pq_can_parser(CP):

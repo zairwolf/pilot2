@@ -1,9 +1,114 @@
+dragonpilot 0.7.8.2
+========================
+* 修正在沒網路的情況下，開機超過五分鐘的問題。
+* Fixed 5+ minutes boot time issue when there is no internet connection.
+* 錯誤回傳改使用 dp 的主機。
+* Used dp server for error reporting.
+* 更新服務改使用 gitee 的 IP 檢查連線狀態。
+* updated service uses gitee IP address instead.
+
+dragonpilot 0.7.8.1
+========================
+* 加入 ko-KR 翻譯。
+* Added ko-KR translation.
+* 加入 Honda Jade 支援。(感謝 @李俊灝)
+* Added Honda Jade support. (Thanks to @lijunhao731)
+* 修正 ui.cc 內存越界的問題。(感謝 @piggy 提供)
+* Fixed ui.cc memory out of bound issue. (Thanks to @piggy)
+* gpxd 記錄改自動存成 zip 格式。
+* gpxd now store in zip format.
+* 強制關閉 panda 檢查 DOS 硬體。
+* Force disabled DOS hardware check in panda.
+
+dragonpilot 0.7.8.0
+========================
+* 基於最新 openpilot 0.7.8 devel.
+* Based on latest openpilot 0.7.8 devel.
+* 加入重置 DP 設定按鈕。(感謝 @LOVEChen 建議)
+* Added "Reset DP Settings" button. (Thanks to @LOVEChen)
+* 將警示訊息更改為類似於概念 UI 的設計。
+* Alert messages changed to concept UI alike design.
+* 當 manager 出現錯誤後，按 Exit 按鈕會執行 reset_update 腳本。
+* Added ability to execute reset_update.sh when press "Exit" button once manager returned errors. 
+
+dragonpilot 0.7.7.3
+========================
+* 修正方向盤監控。
+* Fixed steering monitor timer param.
+* 修正行駛時關閉畫面導致當機的錯誤。(感謝 @salmankhan, @stevej99, @bobbydough 回報)
+* Fixed screen frozen issue when "screen off while driving" toggle is enabled. (Thanks to @salmankhan, @stevej99, @bobbydough)
+* 加回 Dev Mini UI 開關。(感謝 @Ninjaa 建議)
+* Re-added Dev Mini UI. (Thanks to @Ninjaa)
+* 新增 (dp_reset_live_parameters_on_start) 每次發車重設 LiveParameters 值。(感謝 @eisenheim)
+* Added ability (dp_reset_live_param_on_start) to reset LiveParameters on each start. (Thanks @eisenheim)
+* 修正同時開啟 dp_toyota_zss 和 dp_lqr 產生的錯誤。(感謝 @bobbydough)
+* Fixed error cuased by enabling both dp_toyota_zss and dp_lqr at the same time. (Thanks to @bobbydough)
+* 新增 (dp_gpxd) 將 GPS 軌跡導出至 GPX 格式 (/sdcard/gpx_logs/）的功能。 （感謝 @mageymoo1）
+* Added ability (dp_gpxd) to export GPS track into GPX files (/sdcard/gpx_logs/). (Thanks to @mageymoo1)
+* 使用德國的車道寬度估算值。 （感謝 @arne182）
+* Used lane width estimate value from Germany. (Thanks to @arne182)
+
+dragonpilot 0.7.7.2
+========================
+* 加入 d_poly offset。 (感謝 @ShaneSmiskol)
+* Added d_poly offset. (Thanks to @ShaneSmiskol)
+* 加入 ZSS 支援。(感謝 @bobbydough, @WilliamPrius 建議, @bobbydough 測試)
+* Added ZSS support. (Thanks to @bobbydough, @WilliamPrius for recommendation, @bobbydough for testing)
+* 加入錯誤記錄至 /sdcard/crash_logs/ (感謝 @ShaneSmiskol 提供代碼)
+* Added error logs to /sdcard/crash_logs/ (Special Thanks to @ShaneSmiskol)
+* 加入 LQR 控制器開關進設定畫面。
+* Added LQR Controller toggle to settings.
+
+dragonpilot 0.7.7.1
+========================
+* 加入 C2 風扇靜音模式。(感謝 @dingliangxue)
+* Added C2 quiet fan mode. (Thanks to @dingliangxue)
+* 加入「輔助換道最低啟動速度」、「自動換道最低啟動速度」設定。
+* Added "Assisted Lane Change Min Engage Speed" and "Auto Lane Change Min Engage Speed" settings.
+* 加入回調校介面。(感謝 @Kent)
+* Re-added Dev UI. (Thanks to @Kent)
+* 加入 "dp_lqr" 設定來強制使用 RAV4 的 lqr 調校。(感謝 @eisenheim)
+* Added "dp_lqr" setting to force enable lqr tuning from RAV4. (Thanks to eisenheim) 
+
+dragonpilot 0.7.7.0
+========================
+* 基於最新 openpilot 0.7.7 devel.
+* Based on latest openpilot 0.7.7 devel.
+* 當 Manager 出現錯誤時，顯示 IP 位置。(感謝 @dingliangxue)
+* When Manager failed, display IP address. (Thanks to  @dingliangxue)
+* 加回 sr learner 開關。
+* Re-added sr learner toggle.
+* 加回 加速模式 開關。
+* Re-added Accel Profile toggle.
+* Toyota 加入改寫最低巡航速度功能。(感謝 @Mojo)
+* Added Toyota to override lowerest cruise speed. (Thanks to @Mojo)
+* 介面加入盲點偵測顯示。(感謝 @wabes)
+* Added BSM indicator to UI. (Thanks to @wabes)
+* 加回彎道減速功能。(感謝 @Mojo)
+* re-added Slow On Curve functionality. (Thanks to @Mojo)
+
+dragonpilot 0.7.6.2
+========================
+* 修正無法正確關閉駕駛監控的問題。
+* Fixed unable to properly turn off driver monitor issue.
+
+dragonpilot 0.7.6.1
+========================
+* 基於最新 openpilot 0.7.6.1 devel.
+* Based on latest openpilot 0.7.6.1 devel.
+* 優化並整合 dp 服務。 (所有的設定檔已改名，請重新設定所有的功能)
+* Optimized and integrated several dp services. (Settings have been renamed, please re-config all settings)
+* 完全關閉 steer ratio learner。
+* Completely disabled steer ratio learner.
+* 移除「加速模式」。
+* Removed Accel Profile.
+* 加入本田皓影混電版指紋v1。(感謝 @劉駿)
+* Added Honda Breeze Hybrid FPv1. (Thanks to @劉駿)
+* 加入台灣版 Toyota Prius 4.5 指紋v1。(感謝 @jeekid)
+* Added Taiwan Toyota Prius 4.5 FPv1. (Thanks to @jeekid)
+
 dragonpilot 0.7.5.4
 ========================
-* 加入 2018 skoda kodiaq 指紋v1。(感謝 @Gold 提供)
-* Added 2018 skoda kodiaq FPv1. (Thanks to @Gold)
-* 移除方向盤監控設定。(無法取消/關閉方向盤監控)
-* Removed Steering monitor timer adjustment in code (timer in settings will no longer work.)
 * Dynamic Follow 更新模型。(感謝 @ShaneSmiskol 提供代碼、 @cgw1968 測試)
 * Updated Dynamic Follow model. (Special Thanks to @ShaneSmiskol for the feature and @cgw1968 for testing)
 

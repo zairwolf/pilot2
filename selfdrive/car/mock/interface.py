@@ -8,15 +8,14 @@ from selfdrive.car.interfaces import CarInterfaceBase
 
 # mocked car interface to work with chffrplus
 TS = 0.01  # 100Hz
-YAW_FR = 0.2 # ~0.8s time constant on yaw rate filter
+YAW_FR = 0.2  # ~0.8s time constant on yaw rate filter
 # low pass gain
 LPG = 2 * 3.1415 * YAW_FR * TS / (1 + 2 * 3.1415 * YAW_FR * TS)
 
 
 class CarInterface(CarInterfaceBase):
   def __init__(self, CP, CarController, CarState):
-    self.CP = CP
-    self.CC = CarController
+    super().__init__(CP, CarController, CarState)
 
     cloudlog.debug("Using Mock Car Interface")
 
@@ -29,22 +28,12 @@ class CarInterface(CarInterfaceBase):
     self.yaw_rate = 0.
     self.yaw_rate_meas = 0.
 
-    # dp
-    # mock override constructor so we need to define here as well.
-    self.dragon_toyota_stock_dsu = False
-    self.dragon_enable_steering_on_signal = False
-    self.dragon_allow_gas = False
-    self.ts_last_check = 0.
-    self.dragon_lat_ctrl = True
-    self.dp_last_modified = None
-    self.dp_gear_check = True
-
   @staticmethod
   def compute_gb(accel, speed):
     return accel
 
   @staticmethod
-  def get_params(candidate, fingerprint=gen_empty_fingerprint(), has_relay=False, car_fw=[]):
+  def get_params(candidate, fingerprint=gen_empty_fingerprint(), has_relay=False, car_fw=None):
     ret = CarInterfaceBase.get_std_params(candidate, fingerprint, has_relay)
     ret.carName = "mock"
     ret.safetyModel = car.CarParams.SafetyModel.noOutput
@@ -52,15 +41,14 @@ class CarInterface(CarInterfaceBase):
     ret.rotationalInertia = 2500.
     ret.wheelbase = 2.70
     ret.centerToFront = ret.wheelbase * 0.5
-    ret.steerRatio = 13. # reasonable
+    ret.steerRatio = 13.  # reasonable
     ret.tireStiffnessFront = 1e6    # very stiff to neglect slip
     ret.tireStiffnessRear = 1e6     # very stiff to neglect slip
 
     return ret
 
   # returns a car.CarState
-  def update(self, c, can_strings):
-    self.dp_load_params('mock')
+  def update(self, c, can_strings, dragonconf):
     # get basic data from phone and gps since CAN isn't connected
     sensors = messaging.recv_sock(self.sensor)
     if sensors is not None:

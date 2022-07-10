@@ -1,10 +1,12 @@
 from cereal import car
-from selfdrive.swaglog import cloudlog
-from selfdrive.controls.lib.drive_helpers import create_event, EventTypes as ET
 from selfdrive.car.volkswagen.values import CAR, BUTTON_STATES, NWL, TRANS, GEAR, MQB_CARS, PQ_CARS
-from common.params import Params
+from common.params import put_nonblocking
 from selfdrive.car import STD_CARGO_KG, scale_rot_inertia, scale_tire_stiffness, gen_empty_fingerprint
 from selfdrive.car.interfaces import CarInterfaceBase
+from common.dp_common import common_interface_atl, common_interface_get_params_lqr
+
+GEAR = car.CarState.GearShifter
+EventName = car.CarEvent.EventName
 
 class CarInterface(CarInterfaceBase):
   def __init__(self, CP, CarController, CarState):
@@ -25,8 +27,9 @@ class CarInterface(CarInterfaceBase):
     return float(accel) / 4.0
 
   @staticmethod
-  def get_params(candidate, fingerprint=gen_empty_fingerprint(), has_relay=False, car_fw=[]):
+  def get_params(candidate, fingerprint=gen_empty_fingerprint(), has_relay=False, car_fw=None):
     ret = CarInterfaceBase.get_std_params(candidate, fingerprint, has_relay)
+    ret.lateralTuning.init('pid')
 
     # Set global default parameters
     ret.radarOffCan = True
@@ -70,9 +73,6 @@ class CarInterface(CarInterfaceBase):
       else:  # No trans at all
         ret.transmissionType = TRANS.manual
 
-    cloudlog.warning("Detected network location: %s", ret.networkLocation)
-    cloudlog.warning("Detected transmission type: %s", ret.transmissionType)
-
     # PER-VEHICLE PARAMETERS - EDIT HERE TO TUNE INDIVIDUAL VEHICLES
 
     if candidate == CAR.GENERICMQB:
@@ -90,6 +90,9 @@ class CarInterface(CarInterfaceBase):
       ret.steerRatio = 15.6
       tire_stiffness_factor = 1.0
 
+    # dp
+    ret = common_interface_get_params_lqr(ret)
+
     # TODO: get actual value, for now starting with reasonable value for
     # civic and scaling by mass and wheelbase
     ret.rotationalInertia = scale_rot_inertia(ret.mass, ret.wheelbase)
@@ -102,10 +105,8 @@ class CarInterface(CarInterfaceBase):
     return ret
 
   # returns a car.CarState
-  def update(self, c, can_strings):
-    canMonoTimes = []
+  def update(self, c, can_strings, dragonconf):
     buttonEvents = []
-    params = Params()
 
     # Process the most recent CAN message traffic, and check for validity
     # The camera CAN has no signals we use at this time, but we process it
@@ -117,10 +118,18 @@ class CarInterface(CarInterfaceBase):
     ret.canValid = self.cp.can_valid  # FIXME: Restore cp_cam valid check after proper LKAS camera detect
     ret.steeringRateLimited = self.CC.steer_rate_limited if self.CC is not None else False
 
-    # Update the EON metric configuration to match the car at first startup,
+    # dp
+    self.dragonconf = dragonconf
+    ret.cruiseState.enabled = common_interface_atl(ret, dragonconf.dpAtl)
+
+    ret.canValid = self.cp.can_valid and self.cp_cam.can_valid
+    ret.steeringRateLimited = self.CC.steer_rate_limited if self.CC is not None else False
+
+    # TODO: add a field for this to carState, car interface code shouldn't write params
+    # Update the device metric configuration to match the car at first startup,
     # or if there's been a change.
-    if self.CS.displayMetricUnits != self.displayMetricUnitsPrev:
-      params.put("IsMetric", "1" if self.CS.displayMetricUnits else "0")
+    #if self.CS.displayMetricUnits != self.displayMetricUnitsPrev:
+    #  put_nonblocking("IsMetric", "1" if self.CS.displayMetricUnits else "0")
 
     # Check for and process state-change events (button press or release) from
     # the turn stalk switch or ACC steering wheel/control stalk buttons.
@@ -135,21 +144,20 @@ class CarInterface(CarInterfaceBase):
 
     # Vehicle health and operation safety checks
     if self.CS.parkingBrakeSet:
-      events.append(create_event('parkBrake', [ET.NO_ENTRY, ET.USER_DISABLE]))
+      events.add(EventName.parkBrake)
     if self.CS.steeringFault:
-      events.append(create_event('steerTempUnavailable', [ET.NO_ENTRY, ET.WARNING]))
+      events.add(EventName.steerTempUnavailable)
 
     # Engagement and longitudinal control using stock ACC. Make sure OP is
     # disengaged if stock ACC is disengaged.
     if not ret.cruiseState.enabled:
-      events.append(create_event('pcmDisable', [ET.USER_DISABLE]))
+      events.add(EventName.pcmDisable)
     # Attempt OP engagement only on rising edge of stock ACC engagement.
     elif not self.cruise_enabled_prev:
-      events.append(create_event('pcmEnable', [ET.ENABLE]))
+      events.add(EventName.pcmEnable)
 
-    ret.events = events
+    ret.events = events.to_msg()
     ret.buttonEvents = buttonEvents
-    ret.canMonoTimes = canMonoTimes
 
     # update previous car states
     self.gas_pressed_prev = ret.gasPressed
@@ -166,6 +174,6 @@ class CarInterface(CarInterfaceBase):
                    c.hudControl.visualAlert,
                    c.hudControl.audibleAlert,
                    c.hudControl.leftLaneVisible,
-                   c.hudControl.rightLaneVisible)
+                   c.hudControl.rightLaneVisible, self.dragonconf)
     self.frame += 1
     return can_sends

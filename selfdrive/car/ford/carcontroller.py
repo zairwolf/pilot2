@@ -2,7 +2,7 @@ from cereal import car
 from selfdrive.car import make_can_msg
 from selfdrive.car.ford.fordcan import create_steer_command, create_lkas_ui, spam_cancel_button
 from opendbc.can.packer import CANPacker
-
+from common.dp_common import common_controller_ctrl
 
 MAX_STEER_DELTA = 1
 TOGGLE_DEBUG = False
@@ -18,12 +18,29 @@ class CarController():
     self.steer_alert_last = False
     self.lkas_action = 0
 
-  def update(self, enabled, CS, frame, actuators, visual_alert, pcm_cancel):
+    # dp
+    self.last_blinker_on = False
+    self.blinker_end_frame = 0.
+
+  def update(self, enabled, CS, frame, actuators, visual_alert, pcm_cancel, dragonconf):
 
     can_sends = []
     steer_alert = visual_alert == car.CarControl.HUDControl.VisualAlert.steerRequired
 
     apply_steer = actuators.steer
+
+    # dp
+    blinker_on = CS.out.leftBlinker or CS.out.rightBlinker
+    if not enabled:
+      self.blinker_end_frame = 0
+    if self.last_blinker_on and not blinker_on:
+      self.blinker_end_frame = frame + dragonconf.dpSignalOffDelay
+    apply_steer = common_controller_ctrl(enabled,
+                                         dragonconf.dpLatCtrl,
+                                         dragonconf.dpSteeringOnSignal,
+                                         blinker_on or frame < self.blinker_end_frame,
+                                         apply_steer)
+    self.last_blinker_on = blinker_on
 
     if self.enable_camera:
 
@@ -78,7 +95,7 @@ class CarController():
       static_msgs = range(1653, 1658)
       for addr in static_msgs:
         cnt = (frame % 10) + 1
-        can_sends.append(make_can_msg(addr, (cnt<<4).to_bytes(1, 'little') + b'\x00\x00\x00\x00\x00\x00\x00', 1))
+        can_sends.append(make_can_msg(addr, (cnt << 4).to_bytes(1, 'little') + b'\x00\x00\x00\x00\x00\x00\x00', 1))
 
       self.enabled_last = enabled
       self.main_on_last = CS.out.cruiseState.available

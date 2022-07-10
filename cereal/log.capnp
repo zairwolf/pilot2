@@ -130,6 +130,7 @@ struct FrameData {
   focusVal @16 :List(Int16);
   focusConf @17 :List(UInt8);
   sharpnessScore @18 :List(UInt16);
+  recoverState @19 :Int32;
 
   frameType @7 :FrameType;
   timestampSof @8 :UInt64;
@@ -297,8 +298,6 @@ struct ThermalData {
   memUsedPercent @19 :Int8;
   cpuPerc @20 :Int8;
 
-  ipAddr @25 :Text; # dp
-
   enum ThermalStatus {
     green @0;   # all processes run
     yellow @1;  # critical processes run (kill uploader), engage still allowed
@@ -373,6 +372,7 @@ struct HealthData {
     interruptRateTim1 @16;
     interruptRateTim3 @17;
     registerDivergent @18;
+    interruptRateKlineInit @19;
     # Update max fault type in boardd when adding faults
   }
 
@@ -383,6 +383,7 @@ struct HealthData {
     blackPanda @3;
     pedal @4;
     uno @5;
+    dos @6;
   }
 
   enum UsbPowerMode {
@@ -440,18 +441,22 @@ struct RadarState @0x9a185389d6fdd05f {
 struct LiveCalibrationData {
   # deprecated
   warpMatrix @0 :List(Float32);
+
   # camera_frame_from_model_frame
   warpMatrix2 @5 :List(Float32);
   warpMatrixBig @6 :List(Float32);
+
   calStatus @1 :Int8;
   calCycle @2 :Int32;
   calPerc @3 :Int8;
+  validBlocks @9 :Int32;
 
   # view_frame_from_road_frame
   # ui's is inversed needs new
   extrinsicMatrix @4 :List(Float32);
   # the direction of travel vector in device frame
   rpyCalib @7 :List(Float32);
+  rpyCalibSpread @8 :List(Float32);
 }
 
 struct LiveTracks {
@@ -598,8 +603,6 @@ struct ControlsState @0x97ff69c53601abf1 {
     lqrOutput @4 :Float32;
     saturated @5 :Bool;
    }
-
-
 }
 
 struct LiveEventData {
@@ -609,6 +612,8 @@ struct LiveEventData {
 
 struct ModelData {
   frameId @0 :UInt32;
+  frameAge @12 :UInt32;
+  frameDropPerc @13 :Float32;
   timestampEof @9 :UInt64;
 
   path @1 :PathData;
@@ -629,6 +634,7 @@ struct ModelData {
     std @2 :Float32;
     stds @3 :List(Float32);
     poly @4 :List(Float32);
+    validLen @5 :Float32;
   }
 
   struct LeadData {
@@ -801,8 +807,8 @@ struct PathPlan {
   laneChangeState @18 :LaneChangeState;
   laneChangeDirection @19 :LaneChangeDirection;
 
-  # dragonpilot
-  alcAllowed @20 :Bool;
+  # dp
+  dpALCAllowed @20 :Bool;
 
   enum Desire {
     none @0;
@@ -844,6 +850,7 @@ struct LiveLocationKalman {
   # These angles are all eulers and roll, pitch, yaw
   # orientationECEF transforms to rot matrix: ecef_from_device
   orientationECEF @6 : Measurement;
+  calibratedOrientationECEF @20 : Measurement;
   orientationNED @7 : Measurement;
   angularVelocityDevice @8 : Measurement;
 
@@ -860,6 +867,11 @@ struct LiveLocationKalman {
   gpsTimeOfWeek @14 :Float64;
   status @15 :Status;
   unixTimestampMillis @16 :Int64;
+  inputsOK @17 :Bool = true;
+  posenetOK @18 :Bool = true;
+  gpsOK @19 :Bool = true;
+  sensorsOK @21 :Bool = true;
+  deviceStable @22 :Bool = true;
 
   enum Status {
     uninitialized @0;
@@ -1887,6 +1899,7 @@ struct DriverState {
   irPwrDEPRECATED @10 :Float32;
   faceOrientationStd @11 :List(Float32);
   facePositionStd @12 :List(Float32);
+  sgProb @13 :Float32;
 }
 
 struct DMonitoringState {
@@ -2052,5 +2065,83 @@ struct Event {
     dMonitoringState @71: DMonitoringState;
     liveLocationKalman @72 :LiveLocationKalman;
     sentinel @73 :Sentinel;
+    dragonConf @74 :DragonConf;
   }
+}
+
+# dp
+struct DragonConf {
+  dpAtl @0 :Bool;
+  dpAppWaze @1 :Bool;
+  dpAppWazeManual @2 :Int8;
+  dpDashcam @3 :Bool;
+  dpDashcamHoursStored @4 :UInt8;
+  dpAutoShutdown @5 :Bool;
+  dpAutoShutdownIn @6 :UInt16;
+  dpAthenad @7 :Bool;
+  dpUploader @8 :Bool;
+  dpUploadOnMobile @9 :Bool;
+  dpUploadOnHotspot @10 :Bool;
+  dpLatCtrl @11 :Bool;
+  dpSteeringLimitAlert @12 :Bool;
+  dpSteeringOnSignal @13 :Bool;
+  dpSignalOffDelay @14 :UInt8;
+  dpAssistedLcMinMph @15 :Float32;
+  dpAutoLc @16 :Bool;
+  dpAutoLcCont @17 :Bool;
+  dpAutoLcMinMph @18 :Float32;
+  dpAutoLcDelay @19 :Float32;
+  dpSlowOnCurve @20 :Bool;
+  dpAllowGas @21 :Bool;
+  dpMaxCtrlSpeed @22 :Float32;
+  dpLeadCarAlert @23 :Bool;
+  dpDynamicFollow @24 :UInt8;
+  dpAccelProfile @25 :UInt8;
+  dpDriverMonitor @26 :Bool;
+  dpSteeringMonitor @27 :Bool;
+  dpSteeringMonitorTimer @28 :UInt8;
+  dpGearCheck @29 :Bool;
+  dpTempMonitor @30 :Bool;
+  dpDrivingUi @31 :Bool;
+  dpUiScreenOffReversing @32 :Bool;
+  dpUiScreenOffDriving @33 :Bool;
+  dpUiSpeed @34 :Bool;
+  dpUiEvent @35 :Bool;
+  dpUiMaxSpeed @36 :Bool;
+  dpUiFace @37 :Bool;
+  dpUiLane @38 :Bool;
+  dpUiPath @39 :Bool;
+  dpUiLead @40 :Bool;
+  dpUiDev @41 :Bool;
+  dpUiDevMini @42 :Bool;
+  dpUiBlinker @43 :Bool;
+  dpUiBrightness @44 :UInt8;
+  dpUiVolumeBoost @45 :Int8;
+  dpAppAutoUpdate @46 :Bool;
+  dpAppExtGps @47 :Bool;
+  dpAppTomtom @48 :Bool;
+  dpAppTomtomAuto @49 :Bool;
+  dpAppTomtomManual @50 :Int8;
+  dpAppAutonavi @51 :Bool;
+  dpAppAutonaviAuto @52 :Bool;
+  dpAppAutonaviManual @53 :Int8;
+  dpAppAegis @54 :Bool;
+  dpAppAegisAuto @55 :Bool;
+  dpAppAegisManual @56 :Int8;
+  dpAppMixplorer @57 :Bool;
+  dpAppMixplorerManual @58 :Int8;
+  dpToyotaLdw @59 :Bool;
+  dpToyotaSng @60 :Bool;
+  dpToyotaLowestCruiseOverride @61 :Bool;
+  dpToyotaLowestCruiseOverrideAt @62 :Float32;
+  dpToyotaLowestCruiseOverrideSpeed @63 :Float32;
+  dpIpAddr @64 :Text;
+  dpCameraOffset @65 :Int8;
+  dpLocale @66 :Text;
+  dpChargingCtrl @67 :Bool;
+  dpChargingAt @68 :UInt8;
+  dpDischargingAt @69 :UInt8;
+  dpIsUpdating @70 :Bool;
+  dpThermalStarted @71 :Bool;
+  dpThermalOverheat @72 :Bool;
 }

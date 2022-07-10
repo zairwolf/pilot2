@@ -2,11 +2,10 @@
 from cereal import car
 from selfdrive.swaglog import cloudlog
 from selfdrive.config import Conversions as CV
-from selfdrive.controls.lib.drive_helpers import EventTypes as ET, create_event
 from selfdrive.car.ford.values import MAX_ANGLE, Ecu, ECU_FINGERPRINT, FINGERPRINTS
 from selfdrive.car import STD_CARGO_KG, scale_rot_inertia, scale_tire_stiffness, is_ecu_disconnected, gen_empty_fingerprint
 from selfdrive.car.interfaces import CarInterfaceBase
-
+from common.dp_common import common_interface_atl, common_interface_get_params_lqr
 
 class CarInterface(CarInterfaceBase):
 
@@ -15,11 +14,12 @@ class CarInterface(CarInterfaceBase):
     return float(accel) / 3.0
 
   @staticmethod
-  def get_params(candidate, fingerprint=gen_empty_fingerprint(), has_relay=False, car_fw=[]):
+  def get_params(candidate, fingerprint=gen_empty_fingerprint(), has_relay=False, car_fw=None):
     ret = CarInterfaceBase.get_std_params(candidate, fingerprint, has_relay)
     ret.carName = "ford"
     ret.safetyModel = car.CarParams.SafetyModel.ford
     ret.dashcamOnly = True
+    ret.lateralTuning.init('pid')
 
     ret.wheelbase = 2.85
     ret.steerRatio = 14.8
@@ -32,6 +32,9 @@ class CarInterface(CarInterfaceBase):
     ret.steerRateCost = 1.0
     ret.centerToFront = ret.wheelbase * 0.44
     tire_stiffness_factor = 0.5328
+
+    # dp
+    ret = common_interface_get_params_lqr(ret)
 
     # TODO: get actual value, for now starting with reasonable value for
     # civic and scaling by mass and wheelbase
@@ -50,22 +53,23 @@ class CarInterface(CarInterfaceBase):
     return ret
 
   # returns a car.CarState
-  def update(self, c, can_strings):
-    self.dp_load_params('ford')
+  def update(self, c, can_strings, dragonconf):
     # ******************* do can recv *******************
     self.cp.update_strings(can_strings)
 
     ret = self.CS.update(self.cp)
-
+    # dp
+    self.dragonconf = dragonconf
+    ret.cruiseState.enabled = common_interface_atl(ret, dragonconf.dpAtl)
     ret.canValid = self.cp.can_valid
 
     # events
     events = self.create_common_events(ret)
 
-    if self.CS.lkas_state not in [2, 3] and ret.vEgo > 13.* CV.MPH_TO_MS and ret.cruiseState.enabled:
-      events.append(create_event('steerTempUnavailableMute', [ET.WARNING]))
+    if self.CS.lkas_state not in [2, 3] and ret.vEgo > 13. * CV.MPH_TO_MS and ret.cruiseState.enabled:
+      events.add(car.CarEvent.EventName.steerTempUnavailableMute)
 
-    ret.events = events
+    ret.events = events.to_msg()
 
     self.CS.out = ret.as_reader()
     return self.CS.out
@@ -75,7 +79,7 @@ class CarInterface(CarInterfaceBase):
   def apply(self, c):
 
     can_sends = self.CC.update(c.enabled, self.CS, self.frame, c.actuators,
-                               c.hudControl.visualAlert, c.cruiseControl.cancel)
+                               c.hudControl.visualAlert, c.cruiseControl.cancel, self.dragonconf)
 
     self.frame += 1
     return can_sends

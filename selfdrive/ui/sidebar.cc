@@ -10,37 +10,32 @@ static void ui_draw_sidebar_background(UIState *s) {
 }
 
 static void ui_draw_sidebar_settings_button(UIState *s) {
-  bool settingsActive = s->active_app == cereal::UiLayoutState::App::SETTINGS;
-  const int settings_btn_xr = !s->scene.uilayout_sidebarcollapsed ? settings_btn_x : -(sbr_w);
-
-  ui_draw_image(s->vg, settings_btn_xr, settings_btn_y, settings_btn_w, settings_btn_h, s->img_button_settings, settingsActive ? 1.0f : 0.65f);
+  const float alpha = s->active_app == cereal::UiLayoutState::App::SETTINGS ? 1.0f : 0.65f;
+  ui_draw_image(s->vg, settings_btn_x, settings_btn_y, settings_btn_w, settings_btn_h, s->img_button_settings, alpha);
 }
 
 static void ui_draw_sidebar_home_button(UIState *s) {
-  bool homeActive = s->active_app == cereal::UiLayoutState::App::HOME;
-  const int home_btn_xr = !s->scene.uilayout_sidebarcollapsed ? home_btn_x : -(sbr_w);
-
-  if (s->dragon_updating) {
+  const float alpha = s->active_app == cereal::UiLayoutState::App::HOME ? 1.0f : 0.65f;;
+  ui_draw_image(s->vg, home_btn_x, home_btn_y, home_btn_w, home_btn_h, s->img_button_home, alpha);
+  if (s->scene.dpIsUpdating) {
     nvgBeginPath(s->vg);
-    nvgCircle(s->vg, home_btn_xr + home_btn_w/2, home_btn_y + home_btn_h/2, 90);
-    nvgFillColor(s->vg, nvgRGBA(255, 255, 255, s->scene.alert_rate));
+    nvgCircle(s->vg, home_btn_x + home_btn_w/2, home_btn_y + home_btn_h/2, 90);
+    nvgFillColor(s->vg, nvgRGBA(255, 255, 255, s->scene.dp_alert_rate));
     nvgFill(s->vg);
 
-    nvgFillColor(s->vg, nvgRGBA(0, 0, 0, s->scene.alert_rate));
-    nvgFontSize(s->vg, (strcmp(s->dragon_locale, "zh-TW") == 0? 60 : strcmp(s->dragon_locale, "zh-CN") == 0? 60 : 46));
+    nvgFillColor(s->vg, nvgRGBA(0, 0, 0, s->scene.dp_alert_rate));
+    nvgFontSize(s->vg, s->scene.dpLocale == "zh-TW"? 60 : s->scene.dpLocale == "zh-CN"? 60 : 46);
     nvgFontFaceId(s->vg, s->font_sans_bold);
     nvgTextAlign(s->vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
-    nvgTextBox(s->vg, home_btn_xr, home_btn_y + home_btn_h/2, home_btn_w,
-      (strcmp(s->dragon_locale, "zh-TW") == 0? "更新中" : strcmp(s->dragon_locale, "zh-CN") == 0? "更新中" : "UPDATING"),
+    nvgTextBox(s->vg, home_btn_x, home_btn_y + home_btn_h/2, home_btn_w,
+      s->scene.dpLocale == "zh-TW"? "更新中" : s->scene.dpLocale == "zh-CN"? "更新中" : "UPDATING",
       NULL);
 
-    s->scene.alert_rate += 5*s->scene.alert_type;
+    s->scene.dp_alert_rate += 5*s->scene.dp_alert_type;
 
-    if (s->scene.alert_rate <= 0 || s->scene.alert_rate >= 255) {
-      s->scene.alert_type *= -1;
+    if (s->scene.dp_alert_rate <= 0 || s->scene.dp_alert_rate >= 255) {
+      s->scene.dp_alert_type *= -1;
     }
-  } else {
-    ui_draw_image(s->vg, home_btn_xr, home_btn_y, home_btn_w, home_btn_h, s->img_button_home, homeActive ? 1.0f : 0.65f);
   }
 }
 
@@ -53,9 +48,9 @@ static void ui_draw_sidebar_network_strength(UIState *s) {
       {cereal::ThermalData::NetworkStrength::GREAT, 5}};
   const int network_img_h = 27;
   const int network_img_w = 176;
-  const int network_img_x = !s->scene.uilayout_sidebarcollapsed ? 58 : -(sbr_w);
+  const int network_img_x = 58;
   const int network_img_y = 196;
-  const int img_idx = s->scene.networkType == cereal::ThermalData::NetworkType::NONE ? 0 : network_strength_map[s->scene.networkStrength];
+  const int img_idx = s->scene.thermal.getNetworkType() == cereal::ThermalData::NetworkType::NONE ? 0 : network_strength_map[s->scene.thermal.getNetworkStrength()];
   ui_draw_image(s->vg, network_img_x, network_img_y, network_img_w, network_img_h, s->img_network[img_idx], 1.0f);
 }
 
@@ -64,23 +59,20 @@ static void ui_draw_sidebar_ip_addr(UIState *s) {
   const int network_ip_x = !s->scene.uilayout_sidebarcollapsed ? 54 : -(sbr_w);
   const int network_ip_y = 255;
 
-  char network_ip_str[15];
-  snprintf(network_ip_str, sizeof(network_ip_str), "%s", s->scene.ipAddr);
   nvgFillColor(s->vg, COLOR_WHITE);
   nvgFontSize(s->vg, 34);
   nvgFontFaceId(s->vg, s->font_sans_regular);
   nvgTextAlign(s->vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
-  nvgTextBox(s->vg, network_ip_x, network_ip_y, network_ip_w, network_ip_str, NULL);
+  nvgTextBox(s->vg, network_ip_x, network_ip_y, network_ip_w, s->scene.dpIpAddr.c_str(), NULL);
 }
 
 static void ui_draw_sidebar_battery_text(UIState *s) {
-  const int battery_img_h = 36;
   const int battery_img_w = 96;
-  const int battery_img_x = !s->scene.uilayout_sidebarcollapsed ? 150 : -(sbr_w);
+  const int battery_img_x = 160;
   const int battery_img_y = 305;
 
   char battery_str[7];
-  snprintf(battery_str, sizeof(battery_str), "%d%%%s", s->scene.batteryPercent, s->scene.batteryCharging ? "+" : "-");
+  snprintf(battery_str, sizeof(battery_str), "%d%%%s", s->scene.thermal.getBatteryPercent(), s->scene.thermal.getBatteryStatus() == "Charging" ? "+" : "-");
   nvgFillColor(s->vg, COLOR_WHITE);
   nvgFontSize(s->vg, 44);
   nvgFontFaceId(s->vg, s->font_sans_regular);
@@ -88,19 +80,19 @@ static void ui_draw_sidebar_battery_text(UIState *s) {
   nvgTextBox(s->vg, battery_img_x, battery_img_y, battery_img_w, battery_str, NULL);
 }
 
-static void ui_draw_sidebar_battery_icon(UIState *s) {
-  const int battery_img_h = 36;
-  const int battery_img_w = 76;
-  const int battery_img_x = !s->scene.uilayout_sidebarcollapsed ? 160 : -(sbr_w);
-  const int battery_img_y = 255;
-
-  int battery_img = s->scene.batteryCharging ? s->img_battery_charging : s->img_battery;
-
-  ui_draw_rect(s->vg, battery_img_x + 6, battery_img_y + 5,
-               ((battery_img_w - 19) * (s->scene.batteryPercent * 0.01)), battery_img_h - 11, COLOR_WHITE);
-
-  ui_draw_image(s->vg, battery_img_x, battery_img_y, battery_img_w, battery_img_h, battery_img, 1.0f);
-}
+//static void ui_draw_sidebar_battery_icon(UIState *s) {
+//  const int battery_img_h = 36;
+//  const int battery_img_w = 76;
+//  const int battery_img_x = 160;
+//  const int battery_img_y = 255;
+//
+//  int battery_img = s->scene.thermal.getBatteryStatus() == "Charging" ? s->img_battery_charging : s->img_battery;
+//
+//  ui_draw_rect(s->vg, battery_img_x + 6, battery_img_y + 5,
+//               ((battery_img_w - 19) * (s->scene.thermal.getBatteryPercent() * 0.01)), battery_img_h - 11, COLOR_WHITE);
+//
+//  ui_draw_image(s->vg, battery_img_x, battery_img_y, battery_img_w, battery_img_h, battery_img, 1.0f);
+//}
 
 static void ui_draw_sidebar_network_type(UIState *s) {
   static std::map<cereal::ThermalData::NetworkType, const char *> network_type_map = {
@@ -110,11 +102,10 @@ static void ui_draw_sidebar_network_type(UIState *s) {
       {cereal::ThermalData::NetworkType::CELL3_G, "3G"},
       {cereal::ThermalData::NetworkType::CELL4_G, "4G"},
       {cereal::ThermalData::NetworkType::CELL5_G, "5G"}};
-  const int network_x = !s->scene.uilayout_sidebarcollapsed ? 50 : -(sbr_w);
+  const int network_x = 50;
   const int network_y = 303;
   const int network_w = 100;
-  const int network_h = 100;
-  const char *network_type = network_type_map[s->scene.networkType];
+  const char *network_type = network_type_map[s->scene.thermal.getNetworkType()];
   nvgFillColor(s->vg, COLOR_WHITE);
   nvgFontSize(s->vg, 48);
   nvgFontFaceId(s->vg, s->font_sans_regular);
@@ -123,7 +114,7 @@ static void ui_draw_sidebar_network_type(UIState *s) {
 }
 
 static void ui_draw_sidebar_metric(UIState *s, const char* label_str, const char* value_str, const int severity, const int y_offset, const char* message_str) {
-  const int metric_x = !s->scene.uilayout_sidebarcollapsed ? 30 : -(sbr_w);
+  const int metric_x = 30;
   const int metric_y = 338 + y_offset;
   const int metric_w = 240;
   const int metric_h = message_str ? strchr(message_str, '\n') ? 124 : 100 : 148;
@@ -177,23 +168,22 @@ static void ui_draw_sidebar_temp_metric(UIState *s) {
   char temp_value_str[32];
   char temp_value_unit[32];
   const int temp_y_offset = 0;
-  snprintf(temp_value_str, sizeof(temp_value_str), "%d", s->scene.paTemp);
+  snprintf(temp_value_str, sizeof(temp_value_str), "%d", s->scene.thermal.getPa0());
   snprintf(temp_value_unit, sizeof(temp_value_unit), "%s", "°C");
-  snprintf(temp_label_str, sizeof(temp_label_str), "%s",
-  (strcmp(s->dragon_locale, "zh-TW") == 0? "溫度" : strcmp(s->dragon_locale, "zh-CN") == 0? "温度" : "TEMP"));
+  snprintf(temp_label_str, sizeof(temp_label_str), "%s", s->scene.dpLocale == "zh-TW"? "溫度" : s->scene.dpLocale == "zh-CN"? "温度" : "TEMP");
   strcat(temp_value_str, temp_value_unit);
 
-  ui_draw_sidebar_metric(s, temp_label_str, temp_value_str, temp_severity_map[s->scene.thermalStatus], temp_y_offset, NULL);
+  ui_draw_sidebar_metric(s, temp_label_str, temp_value_str, temp_severity_map[s->scene.thermal.getThermalStatus()], temp_y_offset, NULL);
 }
 
 static void ui_draw_sidebar_panda_metric(UIState *s) {
-  int panda_severity;
+  int panda_severity = 2;
   char panda_message_str[32];
   const int panda_y_offset = 32 + 148;
 
   if (s->scene.hwType == cereal::HealthData::HwType::UNKNOWN) {
     panda_severity = 2;
-    snprintf(panda_message_str, sizeof(panda_message_str), "%s", "NO\nVEHICLE");
+    snprintf(panda_message_str, sizeof(panda_message_str), "%s", "VEHICLE\nNO");
   } else {
     if (s->started){
       if (s->scene.satelliteCount < 6) {
@@ -211,16 +201,16 @@ static void ui_draw_sidebar_panda_metric(UIState *s) {
 
   ui_draw_sidebar_metric(s, NULL, NULL, panda_severity, panda_y_offset, panda_message_str);
 }
+
 static void ui_draw_sidebar_connectivity(UIState *s) {
-  if (s->scene.athenaStatus == NET_DISCONNECTED) {
-    ui_draw_sidebar_metric(s, NULL, NULL, 1, 180+158,
-    (strcmp(s->dragon_locale, "zh-TW") == 0? "CONNECT\n已離線" : strcmp(s->dragon_locale, "zh-CN") == 0? "CONNECT\n已离线" : "CONNECT\nOFFLINE"));
+  if (!s->scene.dpAthenad) {
+    ui_draw_sidebar_metric(s, NULL, NULL, 1, 180+158, "CONNECT\nDISABLED");
+  } else if (s->scene.athenaStatus == NET_DISCONNECTED) {
+    ui_draw_sidebar_metric(s, NULL, NULL, 1, 180+158, "CONNECT\nOFFLINE");
   } else if (s->scene.athenaStatus == NET_CONNECTED) {
-    ui_draw_sidebar_metric(s, NULL, NULL, 0, 180+158,
-    (strcmp(s->dragon_locale, "zh-TW") == 0? "CONNECT\n已連線" : strcmp(s->dragon_locale, "zh-CN") == 0? "CONNECT\n已连线" : "CONNECT\nONLINE"));
+    ui_draw_sidebar_metric(s, NULL, NULL, 0, 180+158, "CONNECT\nONLINE");
   } else {
-    ui_draw_sidebar_metric(s, NULL, NULL, 2, 180+158,
-    (strcmp(s->dragon_locale, "zh-TW") == 0? "CONNECT\n錯誤" : strcmp(s->dragon_locale, "zh-CN") == 0? "CONNECT\n错误" : "CONNECT\nERROR"));
+    ui_draw_sidebar_metric(s, NULL, NULL, 2, 180+158, "CONNECT\nERROR");
   }
 }
 
